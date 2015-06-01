@@ -11,14 +11,15 @@ class JenkinsJobManager {
 	String createJobInView
 	String jenkinsUser
 	String jenkinsPassword
+	String scmTriggerSpec
 
 	Boolean dryRun = false
 	Boolean noDelete = false
 	Boolean startOnCreate = false
 
-	String featureSuffix = "feature-"
-	String hotfixSuffix = "hotfix-"
-	String releaseSuffix = "release-"
+	String featureSuffix = "feature"
+	String hotfixSuffix = "hotfix"
+	String releaseSuffix = "release"
 
 	String templateFeatureSuffix = "feature"
 	String templateHotfixSuffix = "hotfix"
@@ -94,15 +95,19 @@ class JenkinsJobManager {
 
 			println "---> Founded corresponding branches: $branchesWithCorrespondingTemplate"
 			branchesWithCorrespondingTemplate.each { branchToProcess ->
+				String expectedJobName = branchToProcess.replaceAll('/', '_');
 				println "-----> Processing branch: $branchToProcess"
+
 				List<ConcreteJob> expectedJobsPerBranch = templateJobsByBranch[templateBranchToProcess].collect { TemplateJob templateJob ->
 					templateJob.concreteJobForBranch(jobPrefix, branchToProcess)
 				}
 				println "-------> Expected jobs:"
 				expectedJobsPerBranch.each { println "           $it" }
-				List<String> jobNamesPerBranch = jobNames.findAll{ it.endsWith(branchToProcess) }
+
+				List<String> jobNamesPerBranch = jobNames.findAll{ it.endsWith(expectedJobName) }
 				println "-------> Job Names per branch:"
 				jobNamesPerBranch.each { println "           $it" }
+
 				List<ConcreteJob> missingJobsPerBranch = expectedJobsPerBranch.findAll { expectedJob ->
 					!jobNamesPerBranch.any {it.contains(expectedJob.jobName) }
 				}
@@ -113,7 +118,7 @@ class JenkinsJobManager {
 
 			List<String> deleteCandidates = jobNames.findAll {  it.contains(branchSuffixMatch[templateBranchToProcess]) }
 			List<String> jobsToDeletePerBranch = deleteCandidates.findAll { candidate ->
-				!branchesWithCorrespondingTemplate.any { candidate.endsWith(it) }
+				!branchesWithCorrespondingTemplate.any { candidate.endsWith(it.replaceAll('/', '_')) }
 			}
 
 			println "-----> Jobs to delete:"
@@ -124,7 +129,7 @@ class JenkinsJobManager {
 		if (missingJobs) {
 			for(ConcreteJob missingJob in missingJobs) {
 				println "Creating missing job: ${missingJob.jobName} from ${missingJob.templateJob.jobName}"
-				jenkinsApi.cloneJobForBranch(jobPrefix, missingJob, createJobInView, gitUrl)
+				jenkinsApi.cloneJobForBranch(jobPrefix, missingJob, createJobInView, gitUrl, scmTriggerSpec)
 				jenkinsApi.startJob(missingJob)
 			}
 		}

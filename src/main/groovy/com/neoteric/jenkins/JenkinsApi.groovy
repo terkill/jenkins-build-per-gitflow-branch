@@ -55,10 +55,10 @@ class JenkinsApi {
 		response.data.text
 	}
 
-	void cloneJobForBranch(String jobPrefix, ConcreteJob missingJob, String createJobInView, String gitUrl) {
+	void cloneJobForBranch(String jobPrefix, ConcreteJob missingJob, String createJobInView, String gitUrl, String scmTriggerSpec) {
 		String createJobInViewPath = resolveViewPath(createJobInView)
 		println "-----> createInView after" + createJobInView
-		String missingJobConfig = configForMissingJob(missingJob, gitUrl)
+		String missingJobConfig = configForMissingJob(missingJob, gitUrl, scmTriggerSpec)
 		TemplateJob templateJob = missingJob.templateJob
 
 		//Copy job with jenkins copy job api, this will make sure jenkins plugins get the call to make a copy if needed (promoted builds plugin needs this)
@@ -82,13 +82,13 @@ class JenkinsApi {
 		elements.join();
 	}
 
-	String configForMissingJob(ConcreteJob missingJob, String gitUrl) {
+	String configForMissingJob(ConcreteJob missingJob, String gitUrl, String scmTriggerSpec) {
 		TemplateJob templateJob = missingJob.templateJob
 		String config = getJobConfig(templateJob.jobName)
-		return processConfig(config, missingJob.branchName, gitUrl)
+		return processConfig(config, missingJob.branchName, gitUrl, scmTriggerSpec)
 	}
 
-	public String processConfig(String entryConfig, String branchName, String gitUrl) {
+	public String processConfig(String entryConfig, String branchName, String gitUrl, String scmTriggerSpec) {
 		def root = new XmlParser().parseText(entryConfig)
 		// update branch name
 		root.scm.branches."hudson.plugins.git.BranchSpec".name[0].value = "*/$branchName"
@@ -100,31 +100,38 @@ class JenkinsApi {
 		if (root.publishers."hudson.plugins.sonar.SonarPublisher".branch[0] != null) {
 			root.publishers."hudson.plugins.sonar.SonarPublisher".branch[0].value = "$branchName"
 		}
-		
-		
+
+		//create scm trigger
+		if (scmTriggerSpec) {
+			def triggers = new Node(root, 'triggers')
+			def scmTrigger = new Node(triggers, 'hudson.triggers.SCMTrigger')
+			new Node(scmTrigger, 'spec', scmTriggerSpec)
+			new Node(scmTrigger, 'ignorePostCommitHooks', 'false')
+		}
+
 		//remove template build variable
 		Node startOnCreateParam = findStartOnCreateParameter(root)
 		if (startOnCreateParam) {
 			startOnCreateParam.parent().remove(startOnCreateParam)
 		}
-		
+
 		//check if it was the only parameter - if so, remove the enclosing tag, so the project won't be seen as build with parameters
 		def propertiesNode = root.properties
 		def parameterDefinitionsProperty = propertiesNode."hudson.model.ParametersDefinitionProperty".parameterDefinitions[0]
-		
+
 		if(!parameterDefinitionsProperty.attributes() && !parameterDefinitionsProperty.children() && !parameterDefinitionsProperty.text()) {
 			root.remove(propertiesNode)
 			new Node(root, 'properties')
 		}
-		
-		
+
+
 		def writer = new StringWriter()
 		XmlNodePrinter xmlPrinter = new XmlNodePrinter(new PrintWriter(writer))
 		xmlPrinter.setPreserveWhitespace(true)
 		xmlPrinter.print(root)
 		return writer.toString()
 	}
-	
+
 	void startJob(ConcreteJob job) {
 		String templateConfig = getJobConfig(job.templateJob.jobName)
 		if (shouldStartJob(templateConfig)) {
@@ -132,7 +139,7 @@ class JenkinsApi {
 			post('job/' + job.jobName + '/build')
 		}
 	}
-	
+
 	public boolean shouldStartJob(String config) {
 		Node root = new XmlParser().parseText(config)
 		Node startOnCreateParam = findStartOnCreateParameter(root)
@@ -141,7 +148,7 @@ class JenkinsApi {
 		}
 		return startOnCreateParam.defaultValue[0]?.text().toBoolean()
 	}
-	
+
 	Node findStartOnCreateParameter(Node root) {
 		return root.properties."hudson.model.ParametersDefinitionProperty".parameterDefinitions."hudson.model.BooleanParameterDefinition".find {
 			it.name[0].text() == SHOULD_START_PARAM_NAME
